@@ -143,7 +143,8 @@ def wrapper(reference, unknown, detector_alg,
 
 
 
-def compareDetectorsDescriptors(image_file1,image_file2,outfile=None):
+def compareDetectorsDescriptors(image_file1,image_file2,results_file=None,
+                                save_results_images_dir=None):
     images = {
         "image1": {"filename":image_file1},
         "image2": {"filename":image_file2}
@@ -157,9 +158,9 @@ def compareDetectorsDescriptors(image_file1,image_file2,outfile=None):
                   columns=['detector','descriptor'])
     df['combo'] = df['detector']+df['descriptor']
     df = df.set_index('combo')
-    output_img_dir = '../results/images_'+os.path.split(outfile)[-1].split('.')[0].split('results')[1]
-    if not os.path.exists('../results/images_'+os.path.split(outfile)[-1].split('.')[0].split('results')[1]):
-        os.makedirs(output_img_dir)
+    # output_img_dir = '../results/images_'+os.path.split(results_file)[-1].split('.')[0].split('results')[1]
+    # if not os.path.exists('../results/images_'+os.path.split(results_file)[-1].split('.')[0].split('results')[1]):
+    #     os.makedirs(output_img_dir)
     for row in df.index:
         print(row)
         print(df.loc[row,'detector'])
@@ -173,7 +174,10 @@ def compareDetectorsDescriptors(image_file1,image_file2,outfile=None):
         df.loc[row,'pct_match'] = pct_match
         print(df.loc[row,'num_matches'])
         print('-'*40)
-        plot_path = os.path.join(output_img_dir,os.path.split(outfile)[-1].split('.')[0]+'_'+df.loc[row,'detector']+'_'+df.loc[row,'descriptor']+'.jpg')
-        plt.savefig(plot_path)
-    df.sort_values('num_matches', ascending=False).to_csv(outfile)
+        if save_results_images_dir is not None and os.path.exists(save_results_images_dir):
+            combo = df.loc[row,'detector']+'_'+df.loc[row,'descriptor']
+            plot_path = os.path.join(save_results_images_dir,os.path.splitext(os.path.basename(results_file))[0]+'_'+combo+'.jpg')
+            plt.savefig(plot_path)
+    if results_file is not None:
+        df.sort_values('num_matches', ascending=False).to_csv(results_file)
 

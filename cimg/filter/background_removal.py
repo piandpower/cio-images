@@ -8,9 +8,9 @@ data_path = '/Users/ryoungblood/opencv_tests/data/'
 
 show_intermediate = False
 
-def remove_bg(file,output_file=None,show_intermediate=False,
-              sobel_ksize=(5,5),gauss_ksize=(9,9), high_bg_noise=False,
-              gray_threshold=30,erosion_ksize=(0,0),new_bg_color=(255,255,0)):
+def remove_bg(file,output_file=None,show_intermediate=False,show_result=False,
+              sobel_ksize=(3,3),gauss_ksize=(5,5), high_bg_noise=False,
+              gray_threshold=30,erosion_ksize=(5,5),new_bg_color=(255,255,255)):
 
     # 1) Load the source image
     img = cv2.imread(file)
@@ -103,7 +103,7 @@ def remove_bg(file,output_file=None,show_intermediate=False,
     mask = cv2.bitwise_xor(mask,np.ones(mask.shape,np.uint8)) # swap 0s/1s
 
     # insert erosion here
-    kernel = np.ones((5,5),np.uint8)
+    kernel = np.ones(erosion_ksize,np.uint8)
     mask = cv2.erode(mask,kernel,iterations=1)
 
     foreground_pass_mask = cv2.cvtColor(mask*255,cv2.COLOR_GRAY2BGR)
@@ -129,8 +129,9 @@ def remove_bg(file,output_file=None,show_intermediate=False,
 
     # 11) Add Foreground to New Background (Output Image)
     output_img = foreground + background
-    plt.imshow(output_img)
-    plt.show()
+    if show_result:
+        plt.imshow(output_img)
+        plt.show()
 
     if show_intermediate:
         titles = ['1) Original Image', '2) Negate', '3) Sobel Filter',
