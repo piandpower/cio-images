@@ -1,0 +1,4 @@
+*.pyc
+cimg/tests/data/_output*
+cimg/tests/data/PRIVATE_CREDENTIALS.txt
+.idea/
