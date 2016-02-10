@@ -5,11 +5,12 @@ from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
 
-both_list = ['brisk','akaze','kaze','orb']#,'sift','surf']
-det_list = ['fast','agast','gftt','mser','star']
+both_list = ['brisk','orb','sift','surf']#,'akaze','kaze']
+det_list = ['fast','agast','gftt','mser','star','akaze','kaze'] # akaze and kaze should be in the both list, but appears their descriptor functionality only works when they were also the detector
 desc_list = ['freak','latch','lucid']
+match_list = ['akaze','kaze']
 
-def findAllCombs(a_list,b_list,ab_list):
+def findAllCombs(a_list,b_list,ab_list,cc_list):
     combs = []
     for a in a_list:
         for b in b_list:
@@ -21,41 +22,65 @@ def findAllCombs(a_list,b_list,ab_list):
             combs.append((ab,b))
     for ab in ab_list:
         combs.append((ab,ab))
+    for cc in cc_list:
+        combs.append((cc,cc))
     return combs
 
 # detectors are for finding keypoints.  They often also support computing
-detectors = {"fast": cv2.FastFeatureDetector_create(), # lots of points (2159) all over
-             "brisk": cv2.BRISK_create(),
-             "akaze": cv2.AKAZE_create(),  # strange delocalization
-             "kaze": cv2.KAZE_create(),  # strange delocalization
-             "agast": cv2.AgastFeatureDetector_create(),
-             "gftt": cv2.GFTTDetector_create(),
-             "mser": cv2.MSER_create(),  # very few keypoints (80)
-             "orb": cv2.ORB_create(),
-             "star": cv2.xfeatures2d.StarDetector_create(),
-             "sift": cv2.xfeatures2d.SIFT_create(),
-             "surf": cv2.xfeatures2d.SURF_create(),
-            }
-descriptors_only = {
+detector_descriptor_algs = {
+    "akaze": cv2.AKAZE_create(),  # strange delocalization
+     "brisk": cv2.BRISK_create(),
+     "kaze": cv2.KAZE_create(),  # strange delocalization
+     "orb": cv2.ORB_create(),
+     "sift": cv2.xfeatures2d.SIFT_create(),
+     "surf": cv2.xfeatures2d.SURF_create(),
+}
+
+detector_algs = {
+    # detectors ONLY
+    "agast": cv2.AgastFeatureDetector_create(),
+     "fast": cv2.FastFeatureDetector_create(), # lots of points (2159) all over
+     "gftt": cv2.GFTTDetector_create(),
+     "mser": cv2.MSER_create(),  # very few keypoints (80)
+     "star": cv2.xfeatures2d.StarDetector_create(),
+     # detectors AND descriptors
+     "akaze": detector_descriptor_algs["akaze"],
+     "brisk": detector_descriptor_algs["brisk"],
+     "kaze": detector_descriptor_algs["kaze"],
+     "orb": detector_descriptor_algs["orb"],
+     "sift": detector_descriptor_algs["sift"],
+     "surf": detector_descriptor_algs["surf"],
+    }
+descriptor_algs = {
     "freak": cv2.xfeatures2d.FREAK_create(),
     "latch": cv2.xfeatures2d.LATCH_create(),
     "lucid": cv2.xfeatures2d.LUCID_create(1, 1),
+    # detectors AND descriptors
+     "akaze": detector_descriptor_algs["akaze"],
+     "brisk": detector_descriptor_algs["brisk"],
+     "kaze": detector_descriptor_algs["kaze"],
+     "orb": detector_descriptor_algs["orb"],
+     "sift": detector_descriptor_algs["sift"],
+     "surf": detector_descriptor_algs["surf"],
 }
 
-def compute_features(image, detector_alg, descriptor_alg=None):
+def compute_features(image, detector_alg, descriptor_alg):
     data = image["image"]
-    if descriptor_alg in detectors:
-        kps, descriptors = detectors[descriptor_alg].detectAndCompute(data, None)
-    elif descriptor_alg in descriptors_only:
-        kps = detectors[detector_alg].detect(data)
-        kps, descriptors = descriptors_only[descriptor_alg].compute(data, kps)
-    else:
+    # if descriptor_alg in detectors:
+    #     kps, feature_vectors = detectors[descriptor_alg].detectAndCompute(data, None)
+    if detector_alg in detector_algs and descriptor_alg in descriptor_algs:
+        keypoints = detector_algs[detector_alg].detect(data)
+        keypoints, descriptors = descriptor_algs[descriptor_alg].compute(data, keypoints)
+    elif detector_alg not in detector_algs:
+        raise ValueError("unknown algorithm passed to detector stage")
+    else: # descriptor_alg not in descriptors
         raise ValueError("unknown algorithm passed to descriptor stage")
-    image["kps"] = kps
+    image["keypoints"] = keypoints
     image["descriptors"] = descriptors
     return image
 
-def perspective_match(reference, unknown, use_flann=False, min_match_count=10,descriptor=None):
+def perspective_match(reference, unknown, use_flann=False, min_match_count=10,
+                      descriptor=None,nn_dist_ratio_threshold=0.7):
     if use_flann:
         FLANN_INDEX_KDTREE = 0
         FLANN_INDEX_LSH    = 6
@@ -78,24 +103,25 @@ def perspective_match(reference, unknown, use_flann=False, min_match_count=10,de
                                k=2)
     good = []
     matchesMask=None
+    inferred_homography = None
     for m,n in matches:
-        if m.distance < 0.7*n.distance:
+        if m.distance < nn_dist_ratio_threshold*n.distance:
             good.append(m)
     if len(good)>min_match_count:
-        src_pts = np.float32([ reference["kps"][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
-        dst_pts = np.float32([ unknown["kps"][m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+        src_pts = np.float32([ reference["keypoints"][m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+        dst_pts = np.float32([ unknown["keypoints"][m.trainIdx].pt for m in good ]).reshape(-1,1,2)
 
         # this limits matches to being within the identified subimage
         try:
-            M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+            inferred_homography, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
             matchesMask = mask.ravel().tolist()
         except AttributeError:
-            matchesMask, good = None, None
+            matchesMask, good, inferred_homography = None, None, None
 
     else:
         print "Not enough matches are found (%d/%d)" % (len(good), min_match_count)
-        matchesMask, good = None, None
-    return matchesMask, good
+        matchesMask, good, inferred_homography = None, None, None
+    return matchesMask, good, inferred_homography
 
 def draw_matches(reference_features, unknown_features, mask, good_pts):
     fig = plt.figure()
@@ -105,16 +131,17 @@ def draw_matches(reference_features, unknown_features, mask, good_pts):
                        flags = 2)
 
     img3 = cv2.drawMatches(reference_features["image"],
-                           reference_features["kps"],
+                           reference_features["keypoints"],
                            unknown_features["image"],
-                           unknown_features["kps"],
+                           unknown_features["keypoints"],
                            good_pts,None,**draw_params)
     plt.imshow(img3)
     return fig
 
 def wrapper(reference, unknown, detector_alg,
             descriptor_alg=None, use_flann=False,
-            min_match_count=5):
+            min_match_count=5,nn_dist_ratio_threshold=0.7,known_homography=None,
+            h_match_rtol=0.2,h_match_atol=0.002):
     if not descriptor_alg:
         descriptor_alg = detector_alg
     reference_features = compute_features(reference,
@@ -123,61 +150,74 @@ def wrapper(reference, unknown, detector_alg,
     unknown_features = compute_features(unknown,
                                         detector_alg,
                                         descriptor_alg)
-    print('ref features: ',len(reference_features['kps']))
-    print('unknown features: ',len(unknown_features['kps']))
-    matchesMask, good_pts = perspective_match(reference_features,
+    print('ref features: ',len(reference_features['keypoints']))
+    print('unknown features: ',len(unknown_features['keypoints']))
+    matchesMask, good_pts, inferred_homography = perspective_match(reference_features,
                                               unknown_features,
                                              use_flann=use_flann,
                                              min_match_count=min_match_count,
-                                             descriptor=descriptor_alg)
+                                             descriptor=descriptor_alg,
+                                              nn_dist_ratio_threshold=nn_dist_ratio_threshold)
+    h_match = False
+    if known_homography is not None and inferred_homography is not None:
+        h_match = np.allclose(known_homography,inferred_homography,rtol=h_match_rtol,
+                                 atol=h_match_atol)
+
     fig = draw_matches(reference_features, unknown_features,
                  matchesMask, good_pts)
-    fig.gca().set_title("keypoints: {}, detector: {}, Matcher: {}".format(
+    fig.gca().set_title("detector: {}, descriptor: {}, Matcher: {}".format(
         detector_alg, descriptor_alg,
         "FLANN" if use_flann else "Brute Force"))
 
-    if good_pts is not None:
-        return len(reference_features['kps']),len(unknown_features['kps']),len(good_pts), fig
+    if good_pts is not None and matchesMask is not None:
+        return len(reference_features['keypoints']),len(unknown_features['keypoints']),len(good_pts),sum(matchesMask), h_match, fig
     else:
-        return len(reference_features['kps']),len(unknown_features['kps']),0, fig
+        return len(reference_features['keypoints']),len(unknown_features['keypoints']),0,0, h_match, fig
 
 
 
 def compareDetectorsDescriptors(image_file1,image_file2,results_file=None,
-                                save_results_images_dir=None):
+                                save_results_images_dir=None,
+                                nn_dist_ratio_threshold=0.7,
+                                known_homography=None,
+                                h_match_rtol=0.2,h_match_atol=0.002):
     images = {
         "image1": {"filename":image_file1},
         "image2": {"filename":image_file2}
     }
 
     for image in images:
-        images[image]["image"] = cv2.imread(images[image]["filename"])
-        #images[image]["image"] = cv2.cvtColor(images[image]["image"], cv2.COLOR_BGR2RGB)
+        images[image]["image"] = cv2.cvtColor(cv2.imread(images[image]["filename"]), cv2.COLOR_BGR2RGB)
 
-    df = pd.DataFrame(findAllCombs(det_list,desc_list,both_list),
+    df = pd.DataFrame(findAllCombs(det_list,desc_list,both_list,match_list),#[('surf','surf'),('kaze','kaze')],#[('agast','sift'),('agast','latch')],
                   columns=['detector','descriptor'])
     df['combo'] = df['detector']+df['descriptor']
     df = df.set_index('combo')
-    # output_img_dir = '../results/images_'+os.path.split(results_file)[-1].split('.')[0].split('results')[1]
-    # if not os.path.exists('../results/images_'+os.path.split(results_file)[-1].split('.')[0].split('results')[1]):
-    #     os.makedirs(output_img_dir)
+
     for row in df.index:
         print(row)
         print(df.loc[row,'detector'])
         print(df.loc[row,'descriptor'])
-        df.loc[row,'img1_kps'],df.loc[row,'img2_kps'],df.loc[row,'num_matches'], fig = wrapper(images["image1"],
+        df.loc[row,'img1_kps'],df.loc[row,'img2_kps'],df.loc[row,'num_matches'], df.loc[row,'num_h_matches'], df.loc[row,'h_match'], fig = wrapper(images["image1"],
                                             images["image2"],
                                             detector_alg=df.loc[row,'detector'],
-                                            descriptor_alg=df.loc[row,'descriptor'])#,
+                                            descriptor_alg=df.loc[row,'descriptor'],
+                                            nn_dist_ratio_threshold=nn_dist_ratio_threshold,
+                                            known_homography=known_homography,
+                                            h_match_rtol=h_match_rtol,
+                                            h_match_atol=h_match_atol)#,
                                             #use_flann=True)
-        pct_match = df.loc[row,'num_matches']/min(df.loc[row,'img1_kps'],df.loc[row,'img2_kps'])
+        pct_match = df.loc[row,'num_h_matches']/min(df.loc[row,'img1_kps'],df.loc[row,'img2_kps'])
         df.loc[row,'pct_match'] = pct_match
-        print(df.loc[row,'num_matches'])
+        df.loc[row,'pct_inliers'] = df.loc[row,'num_h_matches'] / df.loc[row,'num_matches']
+        print(df.loc[row,'num_h_matches'])
         print('-'*40)
-        if save_results_images_dir is not None and os.path.exists(save_results_images_dir):
+
+        if save_results_images_dir is not None and os.path.exists(save_results_images_dir) and df.loc[row,'num_matches'] != 0:
             combo = df.loc[row,'detector']+'_'+df.loc[row,'descriptor']
             plot_path = os.path.join(save_results_images_dir,os.path.splitext(os.path.basename(results_file))[0]+'_'+combo+'.jpg')
             plt.savefig(plot_path)
+
     if results_file is not None:
-        df.sort_values('num_matches', ascending=False).to_csv(results_file)
+        df.sort_values(['h_match','num_h_matches','pct_inliers'], ascending=False).to_csv(results_file)
 
